@@ -41,6 +41,7 @@ static const char *CUSTOM_BUCKET_TYPE = "custom";
 static const char *GUARDDUTY_BUCKET_TYPE = "guardduty";
 static const char *WAF_BUCKET_TYPE = "waf";
 static const char *INSPECTOR_SERVICE_TYPE = "inspector";
+static const char *CLOUDWATCHLOGS_SERVICE_TYPE = "cloudwatch";
 static const char *CISCO_UMBRELLA_BUCKET_TYPE = "cisco_umbrella";
 
 // Parse XML
@@ -315,12 +316,12 @@ int wm_aws_read(const OS_XML *xml, xml_node **nodes, wmodule *module)
             // type is an attribute of the service tag
             if (!strcmp(*nodes[i]->attributes, XML_SERVICE_TYPE)) {
                 if (!nodes[i]->values) {
-                    mterror(WM_AWS_LOGTAG, "Empty service type. Valid one is '%s'", INSPECTOR_SERVICE_TYPE);
+                    mterror(WM_AWS_LOGTAG, "Empty service type. Valid ones are '%s' or '%s'", INSPECTOR_SERVICE_TYPE, CLOUDWATCHLOGS_SERVICE_TYPE);
                     return OS_INVALID;
-                } else if (!strcmp(*nodes[i]->values, INSPECTOR_SERVICE_TYPE)) {
+                } else if (!strcmp(*nodes[i]->values, INSPECTOR_SERVICE_TYPE) || !strcmp(*nodes[i]->values, CLOUDWATCHLOGS_SERVICE_TYPE)) {
                     os_strdup(*nodes[i]->values, cur_service->type);
                 } else {
-                    mterror(WM_AWS_LOGTAG, "Invalid service type '%s'. Valid one is '%s'", *nodes[i]->values, INSPECTOR_SERVICE_TYPE);
+                    mterror(WM_AWS_LOGTAG, "Invalid service type '%s'. Valid ones are '%s' or '%s'", *nodes[i]->values, INSPECTOR_SERVICE_TYPE, CLOUDWATCHLOGS_SERVICE_TYPE);
                     return OS_INVALID;
                 }
             } else {

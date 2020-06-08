@@ -56,7 +56,7 @@ if sys.version_info[0] == 3:
 ################################################################################
 
 # Enable/disable debug mode
-debug_level = 0
+debug_level = 1
 
 
 ################################################################################
@@ -286,11 +286,12 @@ class WazuhIntegration:
         """
         try:
             json_msg = json.dumps(msg, default=str)
-            debug(json_msg, 3)
+            debug("{header}{msg}".format(header=self.msg_header,
+                                          msg=json_msg), 1)
             s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
             s.connect(self.wazuh_queue)
             s.send("{header}{msg}".format(header=self.msg_header,
-                                          msg=json_msg).encode())
+                                          msg=msg).encode())
             s.close()
         except socket.error as e:
             if e.errno == 111:
