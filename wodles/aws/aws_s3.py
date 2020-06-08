@@ -248,6 +248,9 @@ class WazuhIntegration:
                                             region_name=conn_args.get('region_name')
                                             )
                 client = sts_session.client(service_name=service_name)
+            elif service_name == 'cloudwatch':
+                client = boto3.client('logs', region_name=region,
+                                      aws_access_key_id=access_key, aws_secret_access_key=secret_key)
             else:
                 client = boto_session.client(service_name=service_name)
         except botocore.exceptions.ClientError as e:
@@ -2100,6 +2103,22 @@ class AWSService(WazuhIntegration):
         return '{Y}-{m}-{d} 00:00:00.0'.format(Y=self.only_logs_after[0:4],
                                                m=self.only_logs_after[4:6], d=self.only_logs_after[6:8])
 
+    def format_message(self, msg):
+        # rename service field to source
+        if 'service' in msg:
+            msg['source'] = msg['service'].lower()
+            del msg['service']
+        # cast createdAt
+        if 'createdAt' in msg:
+            msg['createdAt'] = datetime.strftime(msg['createdAt'],
+                                                 '%Y-%m-%dT%H:%M:%SZ')
+        # cast updatedAt
+        if 'updatedAt' in msg:
+            msg['updatedAt'] = datetime.strftime(msg['updatedAt'],
+                                                 '%Y-%m-%dT%H:%M:%SZ')
+
+        return {'integration': 'aws', 'aws': msg}
+
 
 class AWSInspector(AWSService):
     """
@@ -2187,21 +2206,168 @@ class AWSInspector(AWSService):
         self.db_connector.commit()
         self.close_db()
 
-    def format_message(self, msg):
-        # rename service field to source
-        if 'service' in msg:
-            msg['source'] = msg['service'].lower()
-            del msg['service']
-        # cast createdAt
-        if 'createdAt' in msg:
-            msg['createdAt'] = datetime.strftime(msg['createdAt'],
-                                                 '%Y-%m-%dT%H:%M:%SZ')
-        # cast updatedAt
-        if 'updatedAt' in msg:
-            msg['updatedAt'] = datetime.strftime(msg['updatedAt'],
-                                                 '%Y-%m-%dT%H:%M:%SZ')
 
-        return {'integration': 'aws', 'aws': msg}
+class AWSCloudWatchLogs(AWSService):
+    """
+    Class for getting AWS Inspector logs
+    :param access_key: AWS access key id
+    :param secret_key: AWS secret access key
+    :param profile: AWS profile
+    :param iam_role_arn: IAM Role
+    :param only_logs_after: Date after which obtain logs.
+    :param region: Region of service
+    """
+
+    def __init__(self, reparse, access_key, secret_key, aws_profile,
+                 iam_role_arn, only_logs_after, region):
+
+        self.sql_create_cloudwatch_table = """
+                            CREATE TABLE
+                                {table_name} (
+                                    service_name 'text' NOT NULL,
+                                    aws_account_id 'text' NOT NULL,
+                                    aws_region 'text' NOT NULL,
+                                    aws_log_group 'text' NOT NULL,
+                                    aws_log_stream 'text' NOT NULL,
+                                    next_token 'text' NOT NULL,
+                                    PRIMARY KEY (service_name, aws_account_id, aws_region, aws_log_group, aws_log_stream));"""
+
+        self.sql_insert_token_value = """
+                                INSERT INTO {table_name} (
+                                    service_name,
+                                    aws_account_id,
+                                    aws_region,
+                                    aws_log_group,
+                                    aws_log_stream,
+                                    next_token)
+                                VALUES
+                                    ('{service_name}',
+                                    '{aws_account_id}',
+                                    '{aws_region}',
+                                    '{aws_log_group}',
+                                    '{aws_log_stream}',
+                                    '{next_token}');"""
+
+        self.sql_update_token_value = """
+                                UPDATE 
+                                    {table_name}
+                                SET
+                                    next_token='{next_token}'
+                                WHERE
+                                    service_name='{service_name}' AND
+                                    aws_account_id='{aws_account_id}' AND
+                                    aws_region='{aws_region}' AND
+                                    aws_log_group='{aws_log_group}' AND
+                                    aws_log_stream='{aws_log_stream}' AND
+                                    next_token='{next_token}';"""
+
+        self.sql_find_next_token = """
+                                SELECT
+                                    next_token
+                                FROM
+                                    '{table_name}'
+                                WHERE
+                                    service_name='{service_name}' AND
+                                    aws_account_id='{aws_account_id}' AND
+                                    aws_region='{aws_region}' AND 
+                                    aws_log_group='{aws_log_group}' AND 
+                                    aws_log_stream='{aws_log_stream}'
+                                LIMIT 1;"""
+
+        self.service_name = 'cloudwatch'
+
+        AWSService.__init__(self, access_key=access_key, secret_key=secret_key,
+                            aws_profile=aws_profile, iam_role_arn=iam_role_arn, only_logs_after=only_logs_after,
+                            service_name=self.service_name, region=region)
+
+        self.db_table_name = 'cloudwatch_logs'
+        self.log_group_name = 'awslogs-test-apache'
+        self.cloudwatch_region = region
+
+    def get_alerts(self):
+        self.init_db(self.sql_create_cloudwatch_table.format(table_name=self.db_table_name))
+
+        for log_stream in self.get_log_streams():
+            response = None
+            next_token = self.get_next_token(log_stream)
+            debug('+++ The token retrieved from DB is "{}"'.format(next_token), 1)
+            while not response or response['events'] != list():
+                debug('+++ Getting CloudWatch logs from log stream {} in log group {}'.format(log_stream,
+                                                                                              self.log_group_name), 1)
+                parameters = {'logGroupName': self.log_group_name,
+                              'logStreamName': log_stream,
+                              'nextToken': next_token}
+
+                response = self.client.get_log_events(
+                    **{param: value for param, value in parameters.items() if value is not None})
+
+                self.save_logs(response)
+                next_token = response['nextForwardToken']
+                debug('+++ Next token is now "{}"'.format(next_token), 1)
+            self.save_next_token(log_stream=log_stream, token=next_token)
+
+        self.close_database()
+
+    def get_next_token(self, log_stream):
+        debug('+++ Getting the token from DB', 1)
+        try:
+            self.db_cursor.execute(self.sql_find_next_token.format(table_name=self.db_table_name,
+                                                            service_name=self.service_name,
+                                                            aws_account_id=self.account_id,
+                                                            aws_region=self.cloudwatch_region,
+                                                            aws_log_group=self.log_group_name,
+                                                            aws_log_stream=log_stream))
+            return self.db_cursor.fetchone()[0]
+        except TypeError:
+            return None
+
+    def save_next_token(self, log_stream, token):
+        debug('+++ Saving token to the DB', 1)
+        try:
+            self.db_cursor.execute(self.sql_insert_token_value.format(table_name=self.db_table_name,
+                                                            service_name=self.service_name,
+                                                            aws_account_id=self.account_id,
+                                                            aws_region=self.cloudwatch_region,
+                                                            aws_log_group=self.log_group_name,
+                                                            aws_log_stream=log_stream,
+                                                            next_token=token))
+        except sqlite3.IntegrityError:
+            debug("+++ The Token already exists on DB. Updating its value...", 1)
+            self.db_cursor.execute(self.sql_update_token_value.format(table_name=self.db_table_name,
+                                                                service_name=self.service_name,
+                                                                aws_account_id=self.account_id,
+                                                                aws_region=self.cloudwatch_region,
+                                                                aws_log_group=self.log_group_name,
+                                                                aws_log_stream=log_stream,
+                                                                next_token=token))
+
+    def save_logs(self, response):
+        debug('Sending message to Analysd...', 1)
+        for event in response['events']:
+            self.send_msg(event['message'])
+
+    def get_log_streams(self):
+        """Get the list of log streams contained in the specified log group."""
+        log_stream_token = None
+        prefix = None
+        parameters = {'logGroupName': self.log_group_name, 'nextToken': log_stream_token,
+                      'logStreamNamePrefix': prefix}
+
+        # Get the logStreams available for the logGroup using boto3
+        response = self.client.describe_log_streams(
+            **{param: value for param, value in parameters.items() if value is not None})
+        result_list = []
+        print("-----------", response)
+        for log_stream in response['logStreams']:
+            result_list.append(log_stream['logStreamName'])
+        return result_list
+
+    def close_database(self):
+        # DB maintenance
+
+        # close connection with DB
+        self.db_connector.commit()
+        self.close_db()
 
 
 ################################################################################
@@ -2297,6 +2463,8 @@ def get_script_arguments():
     parser.add_argument('-o', '--reparse', action='store_true', dest='reparse',
                         help='Parse the log file, even if its been parsed before', default=False)
     parser.add_argument('-t', '--type', dest='type', type=str, help='Bucket type.', default='cloudtrail')
+    parser.add_argument('-g', '--log_group', dest='log_group', help='Name of the log group to be parsed', default='')
+
     return parser.parse_args()
 
 
@@ -2350,6 +2518,8 @@ def main(argv):
         elif options.service:
             if options.service.lower() == 'inspector':
                 service_type = AWSInspector
+            elif options.service.lower() == 'cloudwatch':
+                service_type = AWSCloudWatchLogs
             else:
                 raise Exception("Invalid type of service")
 
