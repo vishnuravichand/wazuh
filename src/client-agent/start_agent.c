@@ -315,10 +315,10 @@ static ssize_t receive_message_udp(const char *msg, char *buffer, unsigned int m
     ssize_t recv_b = 0;
 
     /* Wait for server reply */
-    mwarn(AG_WAIT_SERVER, agt->server[agt->rip_id].rip);
     sleep(1);
-
-    while (attempts <= 5){
+    int level = 0;
+    int max_attempts = 5;
+    while (attempts <= max_attempts){
         /* Receive response */
         recv_b = recv(agt->sock, buffer, max_lenght, MSG_DONTWAIT);
         
@@ -335,21 +335,38 @@ static ssize_t receive_message_udp(const char *msg, char *buffer, unsigned int m
                 #endif
                 break;
             }
-            attempts++;
-            sleep(attempts);
 
-            /* Send message again (after three attempts) */
-            if (attempts >= 3 || recv_b == OS_SOCKTERR) {
-                if (attempts == 3 && agt->enrollment_cfg && agt->enrollment_cfg->enabled) { // Only one enrollment attemp
-                    try_enroll_to_server(agt->server[agt->rip_id].rip);
-                }
+            switch (level){
+            //possible connection delay - only sleep
+            case 0:
+                sleep(max_attempts - attempts);
+                if(attempts == 1) level = 1;
+                break;
+            //possible rejection by manager - resend msg and sleep
+            case 1:
                 if (connect_server(agt->rip_id)) {
-                    // if enroll is successfull reconnect and re-send message
                     send_msg(msg, -1);
                     // After sending message wait before response
-                    sleep(attempts);
+                    sleep(attempts ? agt->enrollment_cfg->delay_after_enrollment/2 : 1);
                 }
+                if(attempts == 3) level = 2;
+                break;
+            //enrollment
+            case 2:
+                if (agt->enrollment_cfg && agt->enrollment_cfg->enabled) { // Only one enrollment attemp
+                    mwarn(AG_WAIT_SERVER, agt->server[agt->rip_id].rip);
+                    if (try_enroll_to_server(agt->server[agt->rip_id].rip) == 0) {
+                        if (connect_server(agt->rip_id)) {
+                            send_msg(msg, -1);
+                            // After sending message wait before response
+                            sleep(attempts);
+                        }
+                    }
+                }
+                break;
             }
+            attempts++;
+
         } else {
             return recv_b;
         }   
@@ -385,13 +402,21 @@ static ssize_t receive_message_tcp(const char *msg, char *buffer, unsigned int m
                     break;
                 case 0:
                     // Peer performed orderly shutdown (connection refused by manager)
-                    if (agt->enrollment_cfg && agt->enrollment_cfg->enabled && !enrollment_attemp) {
+                    if (attempts < 4){
+                        if (connect_server(agt->rip_id)) {
+                            send_msg(msg, -1);
+                            // After sending message wait before response
+                            sleep(attempts ? agt->enrollment_cfg->delay_after_enrollment/2 : 1);
+                        }
+                    }
+                    // Only attemp enrolling once
+                    if (attempts == 4 && agt->enrollment_cfg && agt->enrollment_cfg->enabled) {
+                        mwarn(AG_WAIT_SERVER, agt->server[agt->rip_id].rip);
                         if (try_enroll_to_server(agt->server[agt->rip_id].rip) == 0) {
                             if (connect_server(agt->rip_id)) {
                                 send_msg(msg, -1);
                             }
                         }
-                        enrollment_attemp = true; // Only attemp enrolling once
                     }
                     break;
                 case -1:
