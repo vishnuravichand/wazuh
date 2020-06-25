@@ -107,7 +107,7 @@ def oscap(profile=None):
         pass
 
     # Create an unique FIFO file
-    mkfifo(FIFO_PATH, 0666)
+    mkfifo(FIFO_PATH, 0o666)
 
     try:
         cmd = [OSCAP_BIN, arg_module, 'eval', '--results', FIFO_PATH]
