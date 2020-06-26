@@ -487,6 +487,11 @@
 #define FIM_DB_ERROR_RM_NOT_SCANNED                 "(6709): Failed to delete from db all unscanned files."
 #define FIM_ERROR_WHODATA_INIT                      "(6710): Failed to start the Whodata engine. Directories/files will be monitored in Realtime mode"
 
+/* Wazuh Logtest error messsages */
+#define LOGTEST_ERROR_BIND_SOCK                     "(7100): At wazuh_logtest_init(): Unable to bind to socket '%s'. Errno: (%d) %s"
+#define LOGTEST_ERROR_ACCEPT_CONN                   "(7101): At wazuh_logtest_main(): Failure to accept connection. Errno: %s"
+#define LOGTEST_ERROR_RECV_MSG                      "(7102): At wazuh_logtest_main(): Failure to receive message. Errno: %s"
+
 /* Verbose messages */
 #define STARTUP_MSG "Started (pid: %d)."
 #define PRIVSEP_MSG "Chrooted to directory: %s, using user: %s"
