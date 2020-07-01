@@ -118,9 +118,7 @@ char *__generatetmppass()
     OS_MD5_Str(rand3, -1, md3);
     OS_MD5_Str(rand4, -1, md4);
 
-    if (snprintf(str1, STR_SIZE, "%d%d%s%d%s%s",(int)time(0), rand1, getuname(), rand2, md3, md4) >= STR_SIZE) {
-        mwarn("Temporary shared pass may be truncated because it is too long.");
-    }
+    os_snprintf(str1, STR_SIZE, "%d%d%s%d%s%s",(int)time(0), rand1, getuname(), rand2, md3, md4);
     OS_MD5_Str(str1, -1, md1);
     fstring = strdup(md1);
     free(rand3);
@@ -819,9 +817,7 @@ void* run_dispatcher(__attribute__((unused)) void *arg) {
                     DIR *group_dir = opendir(group_path);
                     if (!group_dir) {
                         merror("Invalid group: %.255s",centralized_group);
-                        if (snprintf(response, 2048, "ERROR: Invalid group: %s\n\n", centralized_group) >= 2048) {
-                            mwarn("Error message may be truncated because it is too long.");
-                        }
+                        os_snprintf(response, 2048, "ERROR: Invalid group: %s\n\n", centralized_group);
                         SSL_write(ssl, response, strlen(response));
                         snprintf(response, 2048, "ERROR: Unable to add agent.\n\n");
                         SSL_write(ssl, response, strlen(response));
@@ -1074,9 +1070,7 @@ void* run_dispatcher(__attribute__((unused)) void *arg) {
                     merror("At set_agent_group(): file path too large for agent '%s'.", keys.keyentries[index]->id);
                     OS_RemoveAgent(keys.keyentries[index]->id);
                     merror("Unable to set agent centralized group: %s (internal error)", centralized_group);
-                    if (snprintf(response, 2048, "ERROR: Internal manager error setting agent centralized group: %s\n\n", centralized_group) < 2048) {
-                        mwarn("Error message may be truncated because it is too long.");
-                    }
+                    os_snprintf(response, 2048, "ERROR: Internal manager error setting agent centralized group: %s\n\n", centralized_group);
                     SSL_write(ssl, response, strlen(response));
                     snprintf(response, 2048, "ERROR: Unable to add agent.\n\n");
                     SSL_write(ssl, response, strlen(response));
